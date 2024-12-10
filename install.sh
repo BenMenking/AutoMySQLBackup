@@ -409,11 +409,11 @@ setup_systemd() {
   printf 'What is the backup frequency [1d]? '
   read backupfreq
   [[ "x$backupfreq" = "x" ]] && backupfreq='1d' 
-  activateIO "/usr/local/bin/automysqlbackup-timer.sh"
+  activateIO "$bindir/automysqlbackup-timer.sh"
   echo "#!/bin/bash"
   echo "$1/automysqlbackup"
   removeIO
-  chmod a+x /usr/local/bin/automysqlbackup-timer.sh
+  chmod a+x $bindir/automysqlbackup-timer.sh
   activateIO "/etc/systemd/system/automysqlbackup-timer.service"
   echo "[Unit]"
   echo 'Description="AutoMySQLBackup Timer"'
@@ -421,7 +421,7 @@ setup_systemd() {
   echo
   echo "[Service]"
   echo "Type=simple"
-  echo "ExecStart=/usr/local/bin/automysqlbackup-timer.sh"
+  echo "ExecStart=$bindir/automysqlbackup-timer.sh"
   echo "User=root"
   removeIO
   activateIO "/etc/systemd/system/automysqlbackup-timer.timer"
@@ -446,6 +446,21 @@ setup_systemd() {
   echo
 }
 
+setup_s3() {
+  (
+  source "$1"
+  read -p "Full AWS S3 bucket name [e.g. s3://my-database-bucket-name]: " bucketname
+  activateIO "$bindir/automysqlbackup-s3sync.sh"
+  echo "#!/bin/bash"
+  echo
+  echo "#aws s3 sync --delete $CONFIG_backup_dir $bucketname"
+  echo "export > /tmp/export.txt"
+  echo
+  removeIO
+  chmod a+x $bindir/automysqlbackup-s3sync.sh
+  )
+}
+
 #precheck
 echo "### Checking archive files for existence, readability and integrity."
 echo
@@ -459,11 +474,17 @@ read bindir
 bindir="${bindir%/}" # strip trailing slash if there
 [[ "x$bindir" = "x" ]] && bindir='/usr/local/bin'
 
-printf 'Setup system timer? [Y/n] '
 read -p "Setup system timer? [Y/n]" setuptimer
-if [[ "x$setuptimer" = "xy" ]] ; then
-  setup_systemd $bindir 
-fi
+case $setuptimer in
+    [Nn]* ) ;;
+    * ) setup_systemd $bindir || echo "Failed to setup timer.";;
+esac
+
+read -p 'Sync with Amazon S3 after each backup? [Y/n] ' syncwith
+case $syncwith in
+    [Nn]* ) ;;
+    * ) setup_s3 "$configdir/myserver.conf" && OVERRIDE_POSTBACKUP='/usr/local/bin/automysqlbackup-s3sync.sh' || echo "Failed to setup post-backup sync.";;
+esac
 
 #create global config directory
 echo "### Creating global configuration directory ${configdir}:"
@@ -501,6 +522,12 @@ cp -i automysqlbackup.conf "${configdir}"/myserver.conf
 cp -i automysqlbackup "${bindir}"/
 [[ -f "${bindir}"/automysqlbackup ]] && [[ -x "${bindir}"/automysqlbackup ]] || chmod +x "${bindir}"/automysqlbackup || echo " failed - make sure you make the program executable, i.e. run 'chmod +x ${bindir}/automysqlbackup'"
 echo
+
+# update with any overrides we have
+if [[ "x$OVERRIDE_POSTBACKUP" != "x" ]] ; then
+  printf "You will need to modify your configuration file so the post-backup sync works correctly.  Set the following in your config:\n\n"
+  printf "\tCONFIG_postbackup=$OVERRIDE_POSTBACKUP\n\n";
+fi
 
 if echo $PATH | grep "${bindir}" >/dev/null 2>&1; then
   printf "if you are running automysqlbackup under the same user as you run this install script,\nyou should be able to access it by running 'automysqlbackup' from the command line.\n"
