@@ -405,6 +405,47 @@ parse_config_file () {
   fi
 }
 
+setup_systemd() {
+  printf 'What is the backup frequency [1d]? '
+  read backupfreq
+  [[ "x$backupfreq" = "x" ]] && backupfreq='1d' 
+  activateIO "/usr/local/bin/automysqlbackup-timer.sh"
+  echo "#!/bin/bash"
+  echo "$1/automysqlbackup"
+  removeIO
+  chmod a+x /usr/local/bin/automysqlbackup-timer.sh
+  activateIO "/etc/systemd/system/automysqlbackup-timer.service"
+  echo "[Unit]"
+  echo 'Description="AutoMySQLBackup Timer"'
+  echo "Requires=automysqlbackup-timer.timer"
+  echo
+  echo "[Service]"
+  echo "Type=simple"
+  echo "ExecStart=/usr/local/bin/automysqlbackup-timer.sh"
+  echo "User=root"
+  removeIO
+  activateIO "/etc/systemd/system/automysqlbackup-timer.timer"
+  echo "[Unit]"
+  echo 'Description="Timer for AutoMySQLBackup"'
+  echo
+  echo "[Timer]"
+  echo "Unit=automysqlbackup-timer.service"
+  echo "OnBootSec=5min"
+  echo "OnUnitActiveSec=$backupfreq"
+  echo
+  echo "[Install]"
+  echo "WantedBy=timers.target"
+  echo
+  removeIO
+
+  echo "*** You will need to run the following commands to enable the timer:"
+  echo
+  echo "sudo systemctl enable automysqlbackup-timer.service"
+  echo "sudo systemctl start automysqlbackup-timer.service"
+  echo
+  echo
+}
+
 #precheck
 echo "### Checking archive files for existence, readability and integrity."
 echo
@@ -417,6 +458,12 @@ printf 'Select directory for the executable [/usr/local/bin]: '
 read bindir
 bindir="${bindir%/}" # strip trailing slash if there
 [[ "x$bindir" = "x" ]] && bindir='/usr/local/bin'
+
+printf 'Setup system timer? [Y/n] '
+read -p "Setup system timer? [Y/n]" setuptimer
+if [[ "x$setuptimer" = "xy" ]] ; then
+  setup_systemd $bindir 
+fi
 
 #create global config directory
 echo "### Creating global configuration directory ${configdir}:"
